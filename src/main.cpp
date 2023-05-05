@@ -3,6 +3,9 @@
 #include <OneWire.h>
 #include <DallasTemperature.h>
 #include <CircularBuffer.h>
+#include <ESP8266WiFi.h>
+#include <ESP8266HTTPClient.h>
+#include <WiFiClientSecureBearSSL.h>
 #include <vector>
 
 SoftwareSerial bt_serial{13, 15};
@@ -21,12 +24,21 @@ int num_decimal_places = 2;
 // Access point "database"
 std::vector<float> ap_db(1024);
 
+const char* ssid = "your_ssid";
+const char* pass = "your_pass";
+void connect_to_wifi();
+
+std::unique_ptr<BearSSL::WiFiClientSecure> client(new BearSSL::WiFiClientSecure);
+HTTPClient http_client;
+
 void setup()
 {
   delay(100);
   Serial.begin(9600);
   bt_serial.begin(9600);
   sensors.begin();
+  connect_to_wifi();
+  client->setInsecure();
 }
 
 void loop()
@@ -44,16 +56,56 @@ void loop()
     sync_signal = bt_serial.read();
     if (sync_signal == 'S') {
       bt_serial.write("data requested...");
-      
+
       for (int i = 0; i < temp_buf.size(); i++) {
         ap_db.push_back(temp_buf[i]);
+
         snprintf(float_str, sizeof(float_str), "%.*f", num_decimal_places, temp_buf[i]);
         bt_serial.write(float_str);
         bt_serial.write(',');
       }
 
       bt_serial.write(';');
+
+      if (http_client.begin(*client, "http://localhost:4000")) {
+        http_client.addHeader("Content-Type", "application/json");
+        // payload – const uint8_t *
+        // size – size_t
+        // { sensor: "DS18B20", values: ["81.47", "84.43", "83.56"] }
+        // { \"sensor\": \"DS18B20\", \"values\": [\"81.47\", \"84.43\", \"83.56\"] }
+
+        // \"81.47\", \"84.43\", \"83.56\"
+        int httpCode = http_client.POST("{ \"sensor\": \"DS18B20\", \"values\": [\"81.47\", \"84.43\", \"83.56\"] }");
+
+        if (httpCode > 0) {
+          if (httpCode == HTTP_CODE_OK) {
+            Serial.println("POST data successful");
+          }
+        } else {
+          Serial.printf("[HTTP] POST failed, error: %s\n", http_client.errorToString(httpCode).c_str());
+        }
+        http_client.end();
+      } else {
+        Serial.print("[HTTPS] Unable to connect\n");
+      }
     }
   }
-  
+
+  // next
+}
+
+void connect_to_wifi()
+{
+  Serial.print("Connecting");
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(ssid, pass);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(1000);
+    Serial.print(".");
+  }
+  Serial.println();
+  Serial.print("Connected to ");
+  Serial.println(ssid);
+  Serial.print("IP address: ");
+  Serial.println(WiFi.localIP());
 }
