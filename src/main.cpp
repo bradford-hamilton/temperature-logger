@@ -5,7 +5,6 @@
 #include <CircularBuffer.h>
 #include <ESP8266WiFi.h>
 #include <ESP8266HTTPClient.h>
-#include <WiFiClientSecureBearSSL.h>
 #include <vector>
 
 SoftwareSerial bt_serial{13, 15};
@@ -26,10 +25,8 @@ std::vector<float> ap_db(1024);
 
 const char* ssid = "your_ssid";
 const char* pass = "your_pass";
-void connect_to_wifi();
 
-std::unique_ptr<BearSSL::WiFiClientSecure> client(new BearSSL::WiFiClientSecure);
-HTTPClient http_client;
+void connect_to_wifi();
 
 void setup()
 {
@@ -38,7 +35,6 @@ void setup()
   bt_serial.begin(9600);
   sensors.begin();
   connect_to_wifi();
-  client->setInsecure();
 }
 
 void loop()
@@ -67,16 +63,18 @@ void loop()
 
       bt_serial.write(';');
 
-      if (http_client.begin(*client, "http://localhost:4000")) {
+      WiFiClient client;
+      HTTPClient http_client;
+
+      if (http_client.begin(client, "http://192.168.1.62:4000/dd/new")) {
         http_client.addHeader("Content-Type", "application/json");
-        // payload – const uint8_t *
-        // size – size_t
+
         // { sensor: "DS18B20", values: ["81.47", "84.43", "83.56"] }
         // { \"sensor\": \"DS18B20\", \"values\": [\"81.47\", \"84.43\", \"83.56\"] }
-
         // \"81.47\", \"84.43\", \"83.56\"
-        int httpCode = http_client.POST("{ \"sensor\": \"DS18B20\", \"values\": [\"81.47\", \"84.43\", \"83.56\"] }");
+        String payload {"{ \"sensor\": \"DS18B20\", \"data_values\": [\"81.47\", \"84.43\", \"83.56\"] }"};
 
+        int httpCode = http_client.POST(payload);
         if (httpCode > 0) {
           if (httpCode == HTTP_CODE_OK) {
             Serial.println("POST data successful");
@@ -84,6 +82,7 @@ void loop()
         } else {
           Serial.printf("[HTTP] POST failed, error: %s\n", http_client.errorToString(httpCode).c_str());
         }
+
         http_client.end();
       } else {
         Serial.print("[HTTPS] Unable to connect\n");
@@ -91,7 +90,6 @@ void loop()
     }
   }
 
-  // next
 }
 
 void connect_to_wifi()
