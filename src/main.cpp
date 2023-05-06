@@ -6,6 +6,8 @@
 #include <ESP8266WiFi.h>
 #include <ESP8266HTTPClient.h>
 #include <vector>
+#include <string>
+#include <sstream>
 
 #define SSID "your_ssid"
 #define PASS "your_pass"
@@ -23,16 +25,17 @@ CircularBuffer<float, 1024> temp_buf;
 
 char signal;
 char float_str[5];
-int decimal_places = 2;
-
-// Access point "database"
-std::vector<float> ap_db(1024);
+uint8_t decimal_places{2};
+std::vector<float> ap_db; // The access point "database"
+uint16_t last_posted_index{0};
 
 void connect_to_wifi();
 void request_and_record_temps();
+void emulate_access_point();
 void handle_bt_signal(char sig);
 void sync_bt_data();
 void post_bt_data();
+String build_payload();
 
 void setup()
 {
@@ -45,15 +48,8 @@ void setup()
 void loop()
 {
   delay(3000);
-
   request_and_record_temps();
-
-  // "Access point" code - requesting data from device. Writing out to serial bluetooth
-  // on phone but will emulate the access point's persisted data in this same project
-  // for simplicity's sake.
-  if (bt_serial.available()) {
-    handle_bt_signal(bt_serial.read());
-  }
+  emulate_access_point();
 }
 
 void connect_to_wifi()
@@ -78,6 +74,13 @@ void request_and_record_temps()
   temp_buf.push(sensors.getTempFByIndex(0));
 }
 
+void emulate_access_point()
+{
+  if (bt_serial.available()) {
+    handle_bt_signal(bt_serial.read());
+  }
+}
+
 void handle_bt_signal(char sig)
 {
   switch(sig) {
@@ -93,7 +96,13 @@ void sync_bt_data()
 {
   for (int i = 0; i < temp_buf.size(); i++) {
     ap_db.push_back(temp_buf[i]);
-    snprintf(float_str, sizeof(float_str), "%.*f", decimal_places, temp_buf[i]);
+    snprintf(
+      float_str,
+      sizeof(float_str),
+      "%.*f",
+      decimal_places,
+      temp_buf[i]
+    );
     bt_serial.write(float_str);
     bt_serial.write(',');
   }
@@ -106,24 +115,38 @@ void post_bt_data()
   HTTPClient http_client;
 
   if (!http_client.begin(client, "http://192.168.1.62:4000/dd/new")) {
-    Serial.print("[HTTPS] Unable to connect\n");
+    Serial.print("[HTTP] Unable to connect\n");
     return;
   }
 
   http_client.addHeader("Content-Type", "application/json");
-  // { sensor: "DS18B20", values: ["81.47", "84.43", "83.56"] }
-  // { \"sensor\": \"DS18B20\", \"values\": [\"81.47\", \"84.43\", \"83.56\"] }
-  // \"81.47\", \"84.43\", \"83.56\"
-  String payload {"{ \"sensor\": \"DS18B20\", \"data_values\": [\"81.47\", \"84.43\", \"83.56\"] }"};
 
-  int httpCode = http_client.POST(payload);
+  int httpCode = http_client.POST(build_payload());
   if (httpCode > 0) {
     if (httpCode == HTTP_CODE_OK) {
-      Serial.println("POST data successful");
+      Serial.println("[HTTP] POST successful");
     }
   } else {
-    Serial.printf("[HTTP] POST failed, error: %s\n", http_client.errorToString(httpCode).c_str());
+    Serial.printf("[HTTP] POST failed: %s\n", http_client.errorToString(httpCode).c_str());
   }
 
   http_client.end();
+}
+
+String build_payload()
+{
+  std::stringstream ss;
+  ss << "{ \"sensor\": \"DS18B20\", \"data_values\": [";
+
+  for (uint16_t i = last_posted_index; i < ap_db.size(); i++) {
+    ss << "\"" << ap_db.at(i) << "\",";
+  }
+
+  std::string payload = ss.str();
+  if (!payload.empty()) { payload.pop_back(); }
+  payload += "] }";
+
+  last_posted_index = ap_db.size();
+
+  return String{payload.c_str()};
 }
