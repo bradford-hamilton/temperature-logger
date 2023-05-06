@@ -29,6 +29,7 @@ uint8_t decimal_places{2};
 std::vector<float> ap_db; // The access point "database"
 uint16_t last_posted_index{0};
 
+// Forward declarations
 void connect_to_wifi();
 void request_and_record_temps();
 void emulate_access_point();
@@ -107,6 +108,7 @@ void sync_bt_data()
     bt_serial.write(',');
   }
   bt_serial.write(';');
+  temp_buf.clear();
 }
 
 void post_bt_data()
@@ -143,7 +145,10 @@ String build_payload()
   }
 
   std::string payload = ss.str();
-  if (!payload.empty()) { payload.pop_back(); }
+  if (payload.empty()) {
+    return String{""};
+  }
+  payload.pop_back();
   payload += "] }";
 
   last_posted_index = ap_db.size();
